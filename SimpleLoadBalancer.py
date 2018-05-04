@@ -65,7 +65,7 @@ class SimpleLoadBalancer(object):
         arp_query.hwdst = packet.src
         arp_query.opcode = arp_query.REPLY
         arp_query.prototype = arp_query.PROTO_TYPE_IP
-        arp_query.protosrc = self.service_ip
+        arp_query.protosrc = packet.payload.protodst#self.service_ip
         arp_query.protodst = packet.payload.protosrc
 
         ether = ethernet()
@@ -109,8 +109,12 @@ class SimpleLoadBalancer(object):
                 # Keep the client information
                 if srcip not in self.server_ips:
                     self.clients_ip_to_macport[srcip] = (packet.src, inport)
-                    log.debug("Clients updated, clients are " + str(self.clients_ip_to_macport))
                     self.send_proxied_arp_reply(packet, connection, inport, self.lb_mac)
+                    log.debug("Clients updated, clients are " + str(self.clients_ip_to_macport))
+                if srcip in self.server_ips:
+                    if packet.payload.protodst in self.clients_ip_to_macport:
+                        self.send_proxied_arp_reply(packet, connection, inport, self.lb_mac)
+                        log.debug("Reply server request, server " + str(srcip))
         
         elif packet.type == packet.IP_TYPE:
             pass
