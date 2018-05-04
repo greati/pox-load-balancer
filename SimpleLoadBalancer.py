@@ -82,12 +82,30 @@ class SimpleLoadBalancer(object):
         connection.send(msg)
 
     def install_flow_rule_client_to_server(self, connection, outport, client_ip, server_ip, buffer_id=of.NO_BUFFER):
-        pass
-        #TODO
+        fm = of.ofp_flow_mod()
+        fm.match.dl_type = 0x800
+        fm.match.nw_dst = self.service_ip
+        fm.match.nw_src = client_ip
+        fm.buffer_id = buffer_id
+        fm.idle_timeout = 10
+        fm.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        fm.actions.append(of.ofp_action_dl_addr.set_dst(self.lb_mac))
+        fm.actions.append(of.ofp_action_output(port = outport))
+        connection.send(fm)
+        log.debug("Install flow, server %s, client %s" % (str(server_ip), str(client_ip)))
 
     def install_flow_rule_server_to_client(self, connection, outport, server_ip, client_ip, buffer_id=of.NO_BUFFER):
-        pass
-        #TODO
+        fm = of.ofp_flow_mod()
+        fm.match.dl_type = 0x800
+        fm.match.nw_dst = client_ip
+        fm.match.nw_src = server_ip
+        fm.buffer_id = buffer_id
+        fm.idle_timeout = 10
+        fm.actions.append(of.ofp_action_nw_addr.set_src(self.service_ip))
+        fm.actions.append(of.ofp_action_dl_addr.set_src(self.lb_mac))
+        fm.actions.append(of.ofp_action_output(port = outport))
+        connection.send(fm)
+        log.debug("Install flow, server %s, client %s" % (str(server_ip), str(client_ip)))
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
@@ -95,6 +113,8 @@ class SimpleLoadBalancer(object):
         inport = event.port
         
         if packet.type == packet.ARP_TYPE:
+            srcip = packet.payload.protosrc
+            dstip = packet.payload.protodst
             # The source IP
             srcip = packet.payload.protosrc
             # Check for reply ARP 
@@ -117,8 +137,14 @@ class SimpleLoadBalancer(object):
                         log.debug("Reply server request, server " + str(srcip))
         
         elif packet.type == packet.IP_TYPE:
-            pass
-            #TODO
+            srcip = packet.payload.srcip
+            dstip = packet.payload.dstip
+            if srcip in self.clients_ip_to_macport and dstip == self.service_ip:
+                rand_server = list(self.servers_ip_to_macport.keys())[random.randint(0,3)]
+                (server_mac, server_port) = self.servers_ip_to_macport[rand_server]
+                self.install_flow_rule_client_to_server(connection, server_port, srcip, rand_server)
+                (client_mac, client_port) = self.clients_ip_to_macport[srcip]
+                self.install_flow_rule_server_to_client(connection, client_port, rand_server, srcip)
         else:
             log.info("Unknown Packet type: %s" % packet.type)
         return
