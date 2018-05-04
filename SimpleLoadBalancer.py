@@ -21,8 +21,10 @@ class SimpleLoadBalancer(object):
 
         # Dict for servers, with IPs as keys and (mac,port) as values
         self.servers_ip_to_macport = {}
+        # Dict for known servers, with IPs as keys and (mac,port) as values
+        self.clients_ip_to_macport = {}
 
-    def send_arp_query(self, ip):
+    def send_proxied_arp_request(self, connection, ip):
         arp_query = arp()
         arp_query.opcode = arp_query.REQUEST
         arp_query.hwtype = arp_query.HW_TYPE_ETHERNET
@@ -42,7 +44,7 @@ class SimpleLoadBalancer(object):
         msg = of.ofp_packet_out()
         msg.data = ether.pack()
         msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
-        self.connection.send(msg)
+        connection.send(msg)
 
     def _handle_ConnectionUp(self, event):
         # Fake load balancer MAC
@@ -50,7 +52,7 @@ class SimpleLoadBalancer(object):
         self.connection = event.connection
         # ARP queries for server MAC
         for i in self.server_ips:
-            self.send_arp_query(i)
+            self.send_proxied_arp_request(self.connection, i)
 
     def update_lb_mapping(self, client_ip):
         ''' Update load balancing mappiing. '''
@@ -58,12 +60,26 @@ class SimpleLoadBalancer(object):
         #TODO
 
     def send_proxied_arp_reply(self, packet, connection, outport, requested_mac):
-        pass
-        #TODO
+        arp_query = arp()
+        arp_query.hwsrc = requested_mac
+        arp_query.hwdst = packet.src
+        arp_query.opcode = arp_query.REPLY
+        arp_query.prototype = arp_query.PROTO_TYPE_IP
+        arp_query.protosrc = self.service_ip
+        arp_query.protodst = packet.payload.protosrc
 
-    def send_proxied_arp_request(self, connection, ip):
-        pass
-        #TODO
+        ether = ethernet()
+        ether.type = ethernet.ARP_TYPE
+        ether.dst = packet.src
+        ether.src = self.lb_mac
+        ether.set_payload(arp_query)
+        
+        log.debug("Sending ARP reply to " + str(arp_query.hwdst))
+
+        msg = of.ofp_packet_out()
+        msg.data = ether.pack()
+        msg.actions.append(of.ofp_action_output(port = outport))
+        connection.send(msg)
 
     def install_flow_rule_client_to_server(self, connection, outport, client_ip, server_ip, buffer_id=of.NO_BUFFER):
         pass
@@ -79,12 +95,23 @@ class SimpleLoadBalancer(object):
         inport = event.port
         
         if packet.type == packet.ARP_TYPE:
+            # The source IP
             srcip = packet.payload.protosrc
-            if srcip in self.server_ips:
-                # Update servers table
-                self.servers_ip_to_macport[srcip] = (packet.src, inport)            
-                log.debug("ARP reply from server %s" % srcip)
-                log.debug("Current servers MAC table " + str(self.servers_ip_to_macport))
+            # Check for reply ARP 
+            if packet.payload.opcode == arp.REPLY:
+                if srcip in self.server_ips:
+                    # Update servers table
+                    self.servers_ip_to_macport[srcip] = (packet.src, inport)            
+                    log.debug("ARP reply from server %s" % srcip)
+                    log.debug("Current servers MAC table " + str(self.servers_ip_to_macport))
+            # Check for request ARP
+            if packet.payload.opcode == arp.REQUEST:
+                # Keep the client information
+                if srcip not in self.server_ips:
+                    self.clients_ip_to_macport[srcip] = (packet.src, inport)
+                    log.debug("Clients updated, clients are " + str(self.clients_ip_to_macport))
+                    self.send_proxied_arp_reply(packet, connection, inport, self.lb_mac)
+        
         elif packet.type == packet.IP_TYPE:
             pass
             #TODO
