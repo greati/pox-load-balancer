@@ -107,6 +107,13 @@ class SimpleLoadBalancer(object):
         connection.send(fm)
         log.debug("Install flow, server %s, client %s" % (str(server_ip), str(client_ip)))
 
+    def resend_packet(self, connection, packet_in, outport):
+        msg = of.ofp_packet_out()
+        msg.data = packet_in
+        action = ofp_action_output(port = outport)
+        msg.actions.append(action)
+        connection.send(msg)
+
     def _handle_PacketIn(self, event):
         packet = event.parsed
         connection = event.connection
@@ -145,6 +152,7 @@ class SimpleLoadBalancer(object):
                 self.install_flow_rule_client_to_server(connection, server_port, srcip, rand_server)
                 (client_mac, client_port) = self.clients_ip_to_macport[srcip]
                 self.install_flow_rule_server_to_client(connection, client_port, rand_server, srcip)
+                self.resend_packet(connection, packet, server_port)
         else:
             log.info("Unknown Packet type: %s" % packet.type)
         return
