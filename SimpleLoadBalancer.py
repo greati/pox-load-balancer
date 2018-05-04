@@ -21,7 +21,7 @@ class SimpleLoadBalancer(object):
         ''' New switch connection handler. '''
         # Fake load balancer MAC
         self.lb_mac = EthAddr("A0:00:00:00:00:01")
-        self.connection = connection
+        self.connection = event.connection
         #TODO
 
     def update_lb_mapping(self, client_ip):
