@@ -1,4 +1,4 @@
-import pox.core import core
+from pox.core import core
 from pox.openflow import *
 import pox.openflow.libopenflow_01 as of
 from pox.lib.packet.arp import arp
@@ -26,18 +26,23 @@ class SimpleLoadBalancer(object):
 
     def update_lb_mapping(self, client_ip):
         ''' Update load balancing mappiing. '''
+        pass
         #TODO
 
     def send_proxied_arp_reply(self, packet, connection, outport, requested_mac):
+        pass
         #TODO
 
     def send_proxied_arp_request(self, connection, ip):
+        pass
         #TODO
 
     def install_flow_rule_client_to_server(self, connection, outport, client_ip, server_ip, buffer_id=of.NO_BUFFER):
+        pass
         #TODO
 
-    def install_flow_rule_server_to_client(self, connection, outport, server_ip, client_ip, buffer_id=of.NO_BUFFER)
+    def install_flow_rule_server_to_client(self, connection, outport, server_ip, client_ip, buffer_id=of.NO_BUFFER):
+        pass
         #TODO
 
     def _handle_PacketIn(self, event):
@@ -46,8 +51,10 @@ class SimpleLoadBalancer(object):
         inport = event.port
         
         if packet.type == packet.ARP_TYPE:
+            pass
             #TODO
         elif packet.type == packet.IP_TYPE:
+            pass
             #TODO
         else:
             log.info("Unknown Packet type: %s" % packet.type)
@@ -56,7 +63,7 @@ class SimpleLoadBalancer(object):
 def launch(ip, servers):
     log.info("Loading Simple Load Balancer module")
     server_ips = servers.replace(",", " ").split()
-    server_ips = [IpAddr(x) for x in server_ips]
+    server_ips = [IPAddr(x) for x in server_ips]
     service_ip = IPAddr(ip)
     core.registerNew(SimpleLoadBalancer, service_ip, server_ips)
 
