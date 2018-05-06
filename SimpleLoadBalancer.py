@@ -88,8 +88,9 @@ class SimpleLoadBalancer(object):
         fm.match.nw_src = client_ip
         fm.buffer_id = buffer_id
         fm.idle_timeout = 10
+        (server_mac, server_port) = self.servers_ip_to_macport[server_ip]
         fm.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        fm.actions.append(of.ofp_action_dl_addr.set_dst(self.lb_mac))
+        fm.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         fm.actions.append(of.ofp_action_output(port = outport))
         connection.send(fm)
         log.debug("Install flow, server %s, client %s" % (str(server_ip), str(client_ip)))
@@ -103,6 +104,8 @@ class SimpleLoadBalancer(object):
         fm.idle_timeout = 10
         fm.actions.append(of.ofp_action_nw_addr.set_src(self.service_ip))
         fm.actions.append(of.ofp_action_dl_addr.set_src(self.lb_mac))
+        (client_mac, client_port) = self.clients_ip_to_macport[client_ip]
+        fm.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
         fm.actions.append(of.ofp_action_output(port = outport))
         connection.send(fm)
         log.debug("Install flow, server %s, client %s" % (str(server_ip), str(client_ip)))
@@ -110,7 +113,7 @@ class SimpleLoadBalancer(object):
     def resend_packet(self, connection, packet_in, outport):
         msg = of.ofp_packet_out()
         msg.data = packet_in
-        action = ofp_action_output(port = outport)
+        action = of.ofp_action_output(port = outport)
         msg.actions.append(action)
         connection.send(msg)
 
@@ -149,10 +152,10 @@ class SimpleLoadBalancer(object):
             if srcip in self.clients_ip_to_macport and dstip == self.service_ip:
                 rand_server = list(self.servers_ip_to_macport.keys())[random.randint(0,3)]
                 (server_mac, server_port) = self.servers_ip_to_macport[rand_server]
-                self.install_flow_rule_client_to_server(connection, server_port, srcip, rand_server)
+                self.install_flow_rule_client_to_server(self.connection, server_port, srcip, rand_server)
                 (client_mac, client_port) = self.clients_ip_to_macport[srcip]
-                self.install_flow_rule_server_to_client(connection, client_port, rand_server, srcip)
-                self.resend_packet(connection, packet, server_port)
+                self.install_flow_rule_server_to_client(self.connection, client_port, rand_server, srcip)
+                #self.resend_packet(connection, packet, server_port)
         else:
             log.info("Unknown Packet type: %s" % packet.type)
         return
