@@ -155,7 +155,10 @@ class SimpleLoadBalancer(object):
                 self.install_flow_rule_client_to_server(self.connection, server_port, srcip, rand_server)
                 (client_mac, client_port) = self.clients_ip_to_macport[srcip]
                 self.install_flow_rule_server_to_client(self.connection, client_port, rand_server, srcip)
-                #self.resend_packet(connection, packet, server_port)
+                # Resend the in_packet 
+                packet.payload.dstip = rand_server
+                packet.dst = server_mac
+                self.resend_packet(self.connection, packet, server_port)
         else:
             log.info("Unknown Packet type: %s" % packet.type)
         return
