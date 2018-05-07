@@ -25,6 +25,7 @@ class SimpleLoadBalancer(object):
         self.clients_ip_to_macport = {}
 
     def send_proxied_arp_request(self, connection, ip):
+        ''' Send ARP request from the load balancer. '''
         arp_query = arp()
         arp_query.opcode = arp_query.REQUEST
         arp_query.hwtype = arp_query.HW_TYPE_ETHERNET
@@ -47,6 +48,7 @@ class SimpleLoadBalancer(object):
         connection.send(msg)
 
     def _handle_ConnectionUp(self, event):
+        ''' Prepare the controller upon switch connection.'''
         # Fake load balancer MAC
         self.lb_mac = EthAddr("A0:00:00:00:00:01")
         self.connection = event.connection
@@ -54,12 +56,8 @@ class SimpleLoadBalancer(object):
         for i in self.server_ips:
             self.send_proxied_arp_request(self.connection, i)
 
-    def update_lb_mapping(self, client_ip):
-        ''' Update load balancing mappiing. '''
-        pass
-        #TODO
-
     def send_proxied_arp_reply(self, packet, connection, outport, requested_mac):
+        ''' Send ARP reply from the load balancer. '''
         arp_query = arp()
         arp_query.hwsrc = requested_mac
         arp_query.hwdst = packet.src
@@ -82,6 +80,7 @@ class SimpleLoadBalancer(object):
         connection.send(msg)
 
     def install_flow_rule_client_to_server(self, connection, outport, client_ip, server_ip, buffer_id=of.NO_BUFFER):
+        ''' Create a table flow entry from clients to servers. '''
         fm = of.ofp_flow_mod()
         fm.match.dl_type = 0x800
         fm.match.nw_dst = self.service_ip
@@ -91,11 +90,13 @@ class SimpleLoadBalancer(object):
         (server_mac, server_port) = self.servers_ip_to_macport[server_ip]
         fm.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         fm.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        fm.actions.append(of.ofp_action_dl_addr.set_src(self.lb_mac))
         fm.actions.append(of.ofp_action_output(port = outport))
         connection.send(fm)
         log.debug("Install flow, server %s, client %s" % (str(server_ip), str(client_ip)))
 
     def install_flow_rule_server_to_client(self, connection, outport, server_ip, client_ip, buffer_id=of.NO_BUFFER):
+        ''' Create a table flow entry from servers to clients. '''
         fm = of.ofp_flow_mod()
         fm.match.dl_type = 0x800
         fm.match.nw_dst = client_ip
@@ -111,6 +112,7 @@ class SimpleLoadBalancer(object):
         log.debug("Install flow, server %s, client %s" % (str(server_ip), str(client_ip)))
 
     def resend_packet(self, connection, packet_in, outport):
+        ''' Resend a packet to a specific port. '''
         msg = of.ofp_packet_out()
         msg.data = packet_in
         action = of.ofp_action_output(port = outport)
@@ -118,6 +120,7 @@ class SimpleLoadBalancer(object):
         connection.send(msg)
 
     def _handle_PacketIn(self, event):
+        ''' Deal with packets for which there is no match in the flow table. '''
         packet = event.parsed
         connection = event.connection
         inport = event.port
@@ -125,8 +128,6 @@ class SimpleLoadBalancer(object):
         if packet.type == packet.ARP_TYPE:
             srcip = packet.payload.protosrc
             dstip = packet.payload.protodst
-            # The source IP
-            srcip = packet.payload.protosrc
             # Check for reply ARP 
             if packet.payload.opcode == arp.REPLY:
                 if srcip in self.server_ips:
@@ -164,6 +165,7 @@ class SimpleLoadBalancer(object):
         return
 
 def launch(ip, servers):
+    ''' Launch the controller. '''
     log.info("Loading Simple Load Balancer module")
     server_ips = servers.replace(",", " ").split()
     server_ips = [IPAddr(x) for x in server_ips]
