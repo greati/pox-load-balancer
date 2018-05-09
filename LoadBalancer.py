@@ -181,29 +181,38 @@ class StatsLoadBalancer(LoadBalancer):
 
     def __init__(self, service_ip, server_ips = []):
         super(StatsLoadBalancer, self).__init__(service_ip, server_ips)
-        # Lock
-        self.lock = Lock()
-        # Server statistics
+        # Lock for flows stats
+        self.lock_flows = Lock()
+        # Lock for port stats
+        self.lock_port = Lock()
+        # Flow packets statistics
         self.server_pack_stats = {}
+        # Lost port packets statistics
+        self.server_port_loss_stats = {}
         # Update interval
         self.update_interval = 2
         # Register flow statistics handler
         core.openflow.addListenerByName("FlowStatsReceived", self.handle_flow_stats)
+        core.openflow.addListenerByName("PortStatsReceived", self.handle_port_stats)
         # Timer
         Timer(self.update_interval, self.request_server_pack_stats, recurring=True)
 
     def _handle_ConnectionUp(self, event):
         super(StatsLoadBalancer, self)._handle_ConnectionUp(event)
-        self.lock.acquire()
+        # Initialize packet flow stats
+        self.lock_flows.acquire()
         for s in self.server_ips:
             self.server_pack_stats[s] = (0, [])
-        self.lock.release()
+        self.lock_flows.release()
+
 
     def request_server_pack_stats(self):
         ''' To be executed in a timer. '''
         # Request statistics
         try:
             req = of.ofp_stats_request(body=of.ofp_flow_stats_request())
+            self.connection.send(req)
+            req = of.ofp_stats_request(body=of.ofp_port_stats_request())
             self.connection.send(req)
         except:
             log.info("Failed to send the statistics request.")
@@ -229,7 +238,7 @@ class StatsLoadBalancer(LoadBalancer):
                     current_packet_count[server_ip] += flow.packet_count
 
         # Process
-        self.lock.acquire()
+        self.lock_flows.acquire()
         for s in self.server_pack_stats:
             last, lst = self.server_pack_stats[s]
             if lst is not None:
@@ -241,17 +250,48 @@ class StatsLoadBalancer(LoadBalancer):
                     self.server_pack_stats[s] = (cur, lst)
                 else:
                     self.server_pack_stats[s] = (0, lst.append(0))
-        self.lock.release()
+        self.lock_flows.release()
                 
+    def handle_port_stats(self, event):
+        ports = event.stats
+        self.lock_port.acquire()
+        for port in ports:
+            #print(self.server_ports)
+            #if port.port_no not in self.server_ports: 
+            #    continue
+            if port.port_no not in self.server_port_loss_stats:
+                self.server_port_loss_stats[port.port_no] = (0, 0, [])
+            (last_tx, last_rx, lst) = self.server_port_loss_stats[port.port_no]
+            if len(lst) == 5: 
+                del lst[0]
+            lst.append((port.tx_dropped - last_tx, port.rx_dropped - last_rx))
+            self.server_port_loss_stats[port.port_no] = (port.tx_dropped, port.rx_dropped, lst)
+        self.lock_port.release()
+
     def choose_server(self, params = {}):
+        '''
+        Scoring: S = 0.7 * packet_flow + 0.3 * (0.4 * rx_loss + 0.6 * tx_loss)
+        Selects the server with the least score.
+        '''
         server_scores = dict(zip(self.server_ips, [0]*len(self.server_ips)))
-        self.lock.acquire()
         # Compute scores
         for s in server_scores:
+            (mac,port) = self.servers_ip_to_macport[s]
+            # Score fraction for por loss 
+            self.lock_port.acquire()
+            if port in self.server_port_loss_stats:
+                lst = self.server_port_loss_stats[port][2]
+                port_loss_score = 0.0
+                for (rx_loss, tx_loss) in lst:
+                    port_loss_score += rx_loss * 0.4 + tx_loss * 0.6 
+                server_scores[s] += 0.3 * port_loss_score
+            self.lock_port.release()
+            # Score fraction for packet flow
+            self.lock_flows.acquire()
             if s in self.server_pack_stats:
-                server_scores[s] = np.median(self.server_pack_stats[s][1])
+                server_scores[s] += 0.7 * np.median(self.server_pack_stats[s][1])
+            self.lock_flows.release()
         # Return with the least score
-        self.lock.release()
         chosen = min(server_scores, key=server_scores.get)
         log.debug("Server chosen: " + str(chosen) + " - with score " + str(server_scores[chosen]))
         return chosen
