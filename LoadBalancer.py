@@ -5,13 +5,16 @@ from pox.lib.packet.arp import arp
 from pox.lib.packet.ipv4 import ipv4
 from pox.lib.addresses import EthAddr, IPAddr
 from pox.lib.packet.ethernet import ethernet, ETHER_BROADCAST
+from pox.lib.recoco import Timer
 import time
 import random
+from threading import Lock
+import numpy as np
 
 # Create logger
 log = core.getLogger()
 
-class SimpleLoadBalancer(object):
+class LoadBalancer(object):
 
     def __init__(self, service_ip, server_ips = []):
         ''' Class initializer. '''
@@ -24,6 +27,9 @@ class SimpleLoadBalancer(object):
         # Dict for known servers, with IPs as keys and (mac,port) as values
         self.clients_ip_to_macport = {}
 
+    def choose_server(self, params = {}):
+        print("Method not implemented.")
+        
     def send_proxied_arp_request(self, connection, ip):
         ''' Send ARP request from the load balancer. '''
         arp_query = arp()
@@ -151,25 +157,114 @@ class SimpleLoadBalancer(object):
             srcip = packet.payload.srcip
             dstip = packet.payload.dstip
             if srcip in self.clients_ip_to_macport and dstip == self.service_ip:
-                rand_server = list(self.servers_ip_to_macport.keys())[random.randint(0,3)]
-                (server_mac, server_port) = self.servers_ip_to_macport[rand_server]
-                self.install_flow_rule_client_to_server(self.connection, server_port, srcip, rand_server)
+                chosen_server = self.choose_server()
+                (server_mac, server_port) = self.servers_ip_to_macport[chosen_server]
+                self.install_flow_rule_client_to_server(self.connection, server_port, srcip, chosen_server)
                 (client_mac, client_port) = self.clients_ip_to_macport[srcip]
-                self.install_flow_rule_server_to_client(self.connection, client_port, rand_server, srcip)
+                self.install_flow_rule_server_to_client(self.connection, client_port, chosen_server, srcip)
                 # Resend the in_packet 
-                packet.payload.dstip = rand_server
+                packet.payload.dstip = chosen_server
                 packet.dst = server_mac
                 self.resend_packet(self.connection, packet, server_port)
         else:
             log.info("Unknown Packet type: %s" % packet.type)
         return
 
-def launch(ip, servers):
+class RandomLoadBalancer(LoadBalancer):
+    ''' Random load balancer. '''
+
+    def choose_server(self, params = {}):
+        return list(self.servers_ip_to_macport.keys())[random.randint(0,3)]
+
+class StatsLoadBalancer(LoadBalancer):
+    ''' Statistics load balancer. '''
+
+    def __init__(self, service_ip, server_ips = []):
+        super(StatsLoadBalancer, self).__init__(service_ip, server_ips)
+        # Lock
+        self.lock = Lock()
+        # Server statistics
+        self.server_pack_stats = {}
+        # Update interval
+        self.update_interval = 2
+        # Register flow statistics handler
+        core.openflow.addListenerByName("FlowStatsReceived", self.handle_flow_stats)
+        # Timer
+        Timer(self.update_interval, self.request_server_pack_stats, recurring=True)
+
+    def _handle_ConnectionUp(self, event):
+        super(StatsLoadBalancer, self)._handle_ConnectionUp(event)
+        self.lock.acquire()
+        for s in self.server_ips:
+            self.server_pack_stats[s] = (0, [])
+        self.lock.release()
+
+    def request_server_pack_stats(self):
+        ''' To be executed in a timer. '''
+        # Request statistics
+        try:
+            req = of.ofp_stats_request(body=of.ofp_flow_stats_request())
+            self.connection.send(req)
+        except:
+            log.info("Failed to send the statistics request.")
+
+    def handle_flow_stats(self, event):
+        flows = event.stats
+        # Initialize current count
+        current_packet_count = dict(zip(self.server_ips, [0]*len(self.server_ips)))
+        # Search flows to servers
+        for flow in flows:
+            # Check flow is from client
+            src = flow.match.nw_src 
+            dst = flow.match.nw_dst
+
+            if src in self.clients_ip_to_macport and dst == self.service_ip:
+                # Discover server destination
+                for action in flow.actions:
+                    if action.type == of.OFPAT_SET_NW_DST:
+                        server_ip = action.nw_addr
+                        break
+                # If server discovered
+                if server_ip:
+                    current_packet_count[server_ip] += flow.packet_count
+
+        # Process
+        self.lock.acquire()
+        for s in self.server_pack_stats:
+            last, lst = self.server_pack_stats[s]
+            if lst is not None:
+                if s in current_packet_count:
+                    cur = current_packet_count[s]
+                    if len(lst) == 10: 
+                        del lst[0]
+                    lst.append(cur - last)
+                    self.server_pack_stats[s] = (cur, lst)
+                else:
+                    self.server_pack_stats[s] = (0, lst.append(0))
+        self.lock.release()
+                
+    def choose_server(self, params = {}):
+        server_scores = dict(zip(self.server_ips, [0]*len(self.server_ips)))
+        self.lock.acquire()
+        # Compute scores
+        for s in server_scores:
+            if s in self.server_pack_stats:
+                server_scores[s] = np.median(self.server_pack_stats[s][1])
+        # Return with the least score
+        self.lock.release()
+        chosen = min(server_scores, key=server_scores.get)
+        log.debug("Server chosen: " + str(chosen) + " - with score " + str(server_scores[chosen]))
+        return chosen
+
+def launch(ip, servers, type_controller):
     ''' Launch the controller. '''
-    log.info("Loading Simple Load Balancer module")
     server_ips = servers.replace(",", " ").split()
     server_ips = [IPAddr(x) for x in server_ips]
     service_ip = IPAddr(ip)
-    core.registerNew(SimpleLoadBalancer, service_ip, server_ips)
+    log.debug("Loading " + str(type_controller) + " module")
+    if type_controller == "random":
+        core.registerNew(RandomLoadBalancer, service_ip, server_ips)
+    elif type_controller == "stats":
+        core.registerNew(StatsLoadBalancer, service_ip, server_ips)
 
 
