@@ -281,9 +281,13 @@ class StatsLoadBalancer(LoadBalancer):
             self.lock_port.acquire()
             if port in self.server_port_loss_stats:
                 lst = self.server_port_loss_stats[port][2]
-                port_loss_score = 0.0
-                for (rx_loss, tx_loss) in lst:
-                    port_loss_score += rx_loss * 0.4 + tx_loss * 0.6 
+                port_loss_score = 0.0 
+                mean_rx = 0.0
+                mean_tx = 0.0
+                for (tx_loss, rx_loss) in lst:
+                    mean_rx += float(rx_loss)/len(lst)
+                    mean_tx += float(tx_loss)/len(lst)
+                port_loss_score = mean_rx * 0.4 + mean_tx * 0.6 
                 server_scores[s] += 0.3 * port_loss_score
             self.lock_port.release()
             # Score fraction for packet flow
