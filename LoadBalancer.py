@@ -30,6 +30,30 @@ class LoadBalancer(object):
     def choose_server(self, params = {}):
         print("Method not implemented.")
         
+    def send_tcp_packet(self, connection, dest_ip, dest_mac, payload):
+        tcp_packet = tcp()
+        tcp_packet.dst_port = 80
+        tcp_packet.payload = payload
+        tcp_packet.seq = 100
+
+        ipv4_packet = ipv4()
+        ipv4_packet.iplen = ipv4.MIN_LEN + len(tcp_packet)
+        ipv4_packet.protocol = ipv4.TCP_PROTOCOL
+        ipv4_packet.dstip = dest_ip
+        ipv4_packet.srcip = self.service_ip
+        ipv4_packet.set_payload(tcp_packet)
+
+        eth_packet = ethernet()
+        eth_packet.set_payload(ipv4_packet)
+        eth_packet.dst = dest_mac
+        eth_packet.src = self.lb_mac
+        eth_packet.type = ethernet.IP_TYPE
+
+        msg = of.ofp_packet_out()
+        msg.data = eth_packet.pack()
+        msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
+        connection.send(msg)
+
     def send_proxied_arp_request(self, connection, ip):
         ''' Send ARP request from the load balancer. '''
         arp_query = arp()
