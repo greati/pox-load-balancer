@@ -30,30 +30,6 @@ class LoadBalancer(object):
     def choose_server(self, params = {}):
         print("Method not implemented.")
         
-    def send_tcp_packet(self, connection, dest_ip, dest_mac, payload):
-        tcp_packet = tcp()
-        tcp_packet.dst_port = 80
-        tcp_packet.payload = payload
-        tcp_packet.seq = 100
-
-        ipv4_packet = ipv4()
-        ipv4_packet.iplen = ipv4.MIN_LEN + len(tcp_packet)
-        ipv4_packet.protocol = ipv4.TCP_PROTOCOL
-        ipv4_packet.dstip = dest_ip
-        ipv4_packet.srcip = self.service_ip
-        ipv4_packet.set_payload(tcp_packet)
-
-        eth_packet = ethernet()
-        eth_packet.set_payload(ipv4_packet)
-        eth_packet.dst = dest_mac
-        eth_packet.src = self.lb_mac
-        eth_packet.type = ethernet.IP_TYPE
-
-        msg = of.ofp_packet_out()
-        msg.data = eth_packet.pack()
-        msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
-        connection.send(msg)
-
     def send_proxied_arp_request(self, connection, ip):
         ''' Send ARP request from the load balancer. '''
         arp_query = arp()
@@ -69,8 +45,6 @@ class LoadBalancer(object):
         ether.dst = ETHER_BROADCAST
         ether.src = self.lb_mac
         ether.set_payload(arp_query)
-        
-        log.debug("Sending ARP query")
 
         msg = of.ofp_packet_out()
         msg.data = ether.pack()
@@ -102,8 +76,6 @@ class LoadBalancer(object):
         ether.src = self.lb_mac
         ether.set_payload(arp_query)
         
-        log.debug("Sending ARP reply to " + str(arp_query.hwdst))
-
         msg = of.ofp_packet_out()
         msg.data = ether.pack()
         msg.actions.append(of.ofp_action_output(port = outport))
@@ -116,7 +88,7 @@ class LoadBalancer(object):
         fm.match.nw_dst = self.service_ip
         fm.match.nw_src = client_ip
         fm.buffer_id = buffer_id
-        fm.idle_timeout = 10
+        fm.idle_timeout = 3
         (server_mac, server_port) = self.servers_ip_to_macport[server_ip]
         fm.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         fm.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
@@ -132,7 +104,7 @@ class LoadBalancer(object):
         fm.match.nw_dst = client_ip
         fm.match.nw_src = server_ip
         fm.buffer_id = buffer_id
-        fm.idle_timeout = 10
+        fm.idle_timeout = 3
         fm.actions.append(of.ofp_action_nw_addr.set_src(self.service_ip))
         fm.actions.append(of.ofp_action_dl_addr.set_src(self.lb_mac))
         (client_mac, client_port) = self.clients_ip_to_macport[client_ip]
@@ -163,19 +135,15 @@ class LoadBalancer(object):
                 if srcip in self.server_ips:
                     # Update servers table
                     self.servers_ip_to_macport[srcip] = (packet.src, inport)            
-                    log.debug("ARP reply from server %s" % srcip)
-                    log.debug("Current servers MAC table " + str(self.servers_ip_to_macport))
             # Check for request ARP
             if packet.payload.opcode == arp.REQUEST:
                 # Keep the client information
                 if srcip not in self.server_ips:
                     self.clients_ip_to_macport[srcip] = (packet.src, inport)
                     self.send_proxied_arp_reply(packet, connection, inport, self.lb_mac)
-                    log.debug("Clients updated, clients are " + str(self.clients_ip_to_macport))
                 if srcip in self.server_ips:
                     if packet.payload.protodst in self.clients_ip_to_macport:
                         self.send_proxied_arp_reply(packet, connection, inport, self.lb_mac)
-                        log.debug("Reply server request, server " + str(srcip))
         
         elif packet.type == packet.IP_TYPE:
             srcip = packet.payload.srcip
