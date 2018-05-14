@@ -166,7 +166,7 @@ class RandomLoadBalancer(LoadBalancer):
     ''' Random load balancer. '''
 
     def choose_server(self, params = {}):
-        return list(self.servers_ip_to_macport.keys())[random.randint(0,3)]
+        return list(self.servers_ip_to_macport.keys())[random.randint(0, len(self.server_ips))]
 
 class StatsLoadBalancer(LoadBalancer):
     ''' Statistics load balancer. '''
@@ -227,7 +227,8 @@ class StatsLoadBalancer(LoadBalancer):
                         break
                 # If server discovered
                 if server_ip:
-                    current_packet_count[server_ip] += flow.packet_count
+                    if flow.packet_count > 0:
+                        current_packet_count[server_ip] += flow.packet_count
 
         # Process
         self.lock_flows.acquire()
@@ -238,10 +239,11 @@ class StatsLoadBalancer(LoadBalancer):
                     cur = current_packet_count[s]
                     if len(lst) == 10: 
                         del lst[0]
-                    lst.append(cur - last)
+                    lst.append(max(0,cur - last))
                     self.server_pack_stats[s] = (cur, lst)
                 else:
                     self.server_pack_stats[s] = (0, lst.append(0))
+        print("Flow stats: " + str(self.server_pack_stats))
         self.lock_flows.release()
                 
     def handle_port_stats(self, event):
@@ -258,6 +260,7 @@ class StatsLoadBalancer(LoadBalancer):
                 del lst[0]
             lst.append((port.tx_dropped - last_tx, port.rx_dropped - last_rx))
             self.server_port_loss_stats[port.port_no] = (port.tx_dropped, port.rx_dropped, lst)
+        print("Port stats:" + str(self.server_port_loss_stats))
         self.lock_port.release()
 
     def choose_server(self, params = {}):
@@ -285,10 +288,12 @@ class StatsLoadBalancer(LoadBalancer):
             # Score fraction for packet flow
             self.lock_flows.acquire()
             if s in self.server_pack_stats:
-                server_scores[s] += 0.7 * np.median(self.server_pack_stats[s][1])
+                if self.server_pack_stats[s][1]:
+                    server_scores[s] += 0.7 * np.mean(self.server_pack_stats[s][1])
             self.lock_flows.release()
         # Return with the least score
         chosen = min(server_scores, key=server_scores.get)
+        log.debug("Scores: " + str(server_scores))
         log.debug("Server chosen: " + str(chosen) + " - with score " + str(server_scores[chosen]))
         return chosen
 
