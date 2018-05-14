@@ -171,7 +171,7 @@ class RandomLoadBalancer(LoadBalancer):
 class StatsLoadBalancer(LoadBalancer):
     ''' Statistics load balancer. '''
 
-    def __init__(self, service_ip, server_ips = []):
+    def __init__(self, service_ip, server_ips = [], print_stats=False):
         super(StatsLoadBalancer, self).__init__(service_ip, server_ips)
         # Lock for flows stats
         self.lock_flows = Lock()
@@ -183,6 +183,8 @@ class StatsLoadBalancer(LoadBalancer):
         self.server_port_loss_stats = {}
         # Update interval
         self.update_interval = 2
+        # Print flows
+        self.print_stats = print_stats
         # Register flow statistics handler
         core.openflow.addListenerByName("FlowStatsReceived", self.handle_flow_stats)
         core.openflow.addListenerByName("PortStatsReceived", self.handle_port_stats)
@@ -243,7 +245,8 @@ class StatsLoadBalancer(LoadBalancer):
                     self.server_pack_stats[s] = (cur, lst)
                 else:
                     self.server_pack_stats[s] = (0, lst.append(0))
-        print("Flow stats: " + str(self.server_pack_stats))
+        if self.print_stats:
+            print("Flow stats: " + str(self.server_pack_stats))
         self.lock_flows.release()
                 
     def handle_port_stats(self, event):
@@ -260,7 +263,8 @@ class StatsLoadBalancer(LoadBalancer):
                 del lst[0]
             lst.append((port.tx_dropped - last_tx, port.rx_dropped - last_rx))
             self.server_port_loss_stats[port.port_no] = (port.tx_dropped, port.rx_dropped, lst)
-        print("Port stats:" + str(self.server_port_loss_stats))
+        if self.print_stats:
+            print("Port stats:" + str(self.server_port_loss_stats))
         self.lock_port.release()
 
     def choose_server(self, params = {}):
@@ -297,15 +301,16 @@ class StatsLoadBalancer(LoadBalancer):
         log.debug("Server chosen: " + str(chosen) + " - with score " + str(server_scores[chosen]))
         return chosen
 
-def launch(ip, servers, type_controller):
+def launch(ip, servers, type_controller, print_stats):
     ''' Launch the controller. '''
     server_ips = servers.replace(",", " ").split()
     server_ips = [IPAddr(x) for x in server_ips]
     service_ip = IPAddr(ip)
     log.debug("Loading " + str(type_controller) + " module")
+    # Controller type
     if type_controller == "random":
         core.registerNew(RandomLoadBalancer, service_ip, server_ips)
     elif type_controller == "stats":
-        core.registerNew(StatsLoadBalancer, service_ip, server_ips)
+        core.registerNew(StatsLoadBalancer, service_ip, server_ips, (print_stats == "True"))
 
 
