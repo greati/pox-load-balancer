@@ -166,7 +166,7 @@ class RandomLoadBalancer(LoadBalancer):
     ''' Random load balancer. '''
 
     def choose_server(self, params = {}):
-        return list(self.servers_ip_to_macport.keys())[random.randint(0, len(self.server_ips))]
+        return list(self.servers_ip_to_macport.keys())[random.randint(0, len(self.server_ips)-1)]
 
 class StatsLoadBalancer(LoadBalancer):
     ''' Statistics load balancer. '''
