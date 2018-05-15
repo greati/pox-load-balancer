@@ -88,7 +88,7 @@ class LoadBalancer(object):
         fm.match.nw_dst = self.service_ip
         fm.match.nw_src = client_ip
         fm.buffer_id = buffer_id
-        fm.idle_timeout = 3
+        fm.idle_timeout = 5
         (server_mac, server_port) = self.servers_ip_to_macport[server_ip]
         fm.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         fm.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
@@ -104,7 +104,7 @@ class LoadBalancer(object):
         fm.match.nw_dst = client_ip
         fm.match.nw_src = server_ip
         fm.buffer_id = buffer_id
-        fm.idle_timeout = 3
+        fm.idle_timeout = 5
         fm.actions.append(of.ofp_action_nw_addr.set_src(self.service_ip))
         fm.actions.append(of.ofp_action_dl_addr.set_src(self.lb_mac))
         (client_mac, client_port) = self.clients_ip_to_macport[client_ip]
