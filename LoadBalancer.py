@@ -140,11 +140,13 @@ class LoadBalancer(object):
                 # Keep the client information
                 if srcip not in self.server_ips:
                     self.clients_ip_to_macport[srcip] = (packet.src, inport)
-                    self.send_proxied_arp_reply(packet, connection, inport, self.lb_mac)
-                if srcip in self.server_ips:
-                    if packet.payload.protodst in self.clients_ip_to_macport:
+                    if dstip == self.service_ip:
                         self.send_proxied_arp_reply(packet, connection, inport, self.lb_mac)
-        
+                if srcip in self.server_ips:
+                    if dstip in self.clients_ip_to_macport:
+                        (client_mac, _) = self.clients_ip_to_macport[dstip]
+                        self.send_proxied_arp_reply(packet, connection, inport, client_mac)
+                        
         elif packet.type == packet.IP_TYPE:
             srcip = packet.payload.srcip
             dstip = packet.payload.dstip
@@ -158,6 +160,15 @@ class LoadBalancer(object):
                 packet.payload.dstip = chosen_server
                 packet.dst = server_mac
                 self.resend_packet(self.connection, packet, server_port)
+            elif dstip in self.clients_ip_to_macport and srcip in self.server_ips:
+                (client_mac, client_port) = self.clients_ip_to_macport[dstip]
+                self.install_flow_rule_server_to_client(self.connection, client_port, srcip, dstip)
+                (server_mac, server_port) = self.servers_ip_to_macport[srcip]
+                self.install_flow_rule_client_to_server(self.connection, server_port, dstip, srcip)
+                # Resend the in_packet 
+                packet.payload.dstip = dstip
+                packet.dst = client_mac
+                self.resend_packet(self.connection, packet, client_port)
         else:
             log.info("Unknown Packet type: %s" % packet.type)
         return
